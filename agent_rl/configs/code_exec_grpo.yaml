@@ -1,0 +1,26 @@
+model:
+  name: minimind-base
+  dtype: bfloat16
+
+policy:
+  max_new_tokens: 256
+  temperature: 0.7
+
+env:
+  type: code_exec
+  max_turns: 6
+  system_prompt: >
+    You are a coding agent that can execute code via the exec_code tool.
+
+rollout:
+  num_episodes_per_iter: 8
+
+train:
+  num_iters: 1000
+  lr: 1.0e-5
+  grad_clip: 1.0
+
+eval:
+  eval_interval: 50
+  num_tasks: 64
+
