@@ -1,0 +1,21 @@
+model:
+  name: minimind-base
+
+policy:
+  max_new_tokens: 128
+
+env:
+  type: search
+  max_turns: 4
+
+rollout:
+  num_episodes_per_iter: 16
+
+train:
+  num_iters: 500
+  lr: 5.0e-6
+
+eval:
+  eval_interval: 25
+  num_tasks: 128
+
