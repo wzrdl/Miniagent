@@ -20,9 +20,9 @@ functions.
 
 ## TODO
 
-- Hook `BasePolicy` into the existing minimind model/tokenizer stack so rollouts
-  can produce real logits/logprobs.
-- Implement the full GRPO update path inside `core/trainer_grpo.py`, including
-  trajectory flattening, advantage estimation, and optimizer steps.
-- Add realistic task samplers plus richer reward functions for code and search
-  tasks, and integrate them with the training scripts.
+- [ ] Hook `BasePolicy` into the existing minimind model/tokenizer stack so
+      rollouts can produce real logits/logprobs.
+- [ ] Implement the full GRPO update path inside `core/trainer_grpo.py`,
+      including trajectory flattening, advantage estimation, and optimizer steps.
+- [ ] Add realistic task samplers plus richer reward functions for code and
+      search tasks, and integrate them with the training scripts.
