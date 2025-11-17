@@ -17,3 +17,12 @@ The goal is to make it easy to plug minimind LLMs into multi-turn,
 tool-augmented RL training loops. Start by exploring `agent_rl/configs` and
 running the corresponding scripts to wire up your model, tasks, and reward
 functions.
+
+## TODO
+
+- Hook `BasePolicy` into the existing minimind model/tokenizer stack so rollouts
+  can produce real logits/logprobs.
+- Implement the full GRPO update path inside `core/trainer_grpo.py`, including
+  trajectory flattening, advantage estimation, and optimizer steps.
+- Add realistic task samplers plus richer reward functions for code and search
+  tasks, and integrate them with the training scripts.
