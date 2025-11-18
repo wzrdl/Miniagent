@@ -6,6 +6,7 @@ from __future__ import annotations
 
 __all__ = [
     "policy_base",
+    "minimind_policy",
     "trajectory",
     "rollout",
     "trainer_grpo",

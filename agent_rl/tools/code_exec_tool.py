@@ -20,12 +20,17 @@ class CodeExecTool(BaseTool):
         self.python_executable = python_executable
         self.workdir = Path(workdir) if workdir else None
 
-    def __call__(self, code: str, timeout: float = 5.0, **_: Any) -> str:
+    def __call__(self, code: str, timeout: float = 5.0, stdin: str | None = None, **_: Any) -> str:
+        """
+        Execute Python code and optionally feed ``stdin`` to the subprocess.
+        """
+
         safe_code = textwrap.dedent(code)
         cmd = [self.python_executable, "-c", safe_code]
         try:
             result = subprocess.run(
                 cmd,
+                input=stdin,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

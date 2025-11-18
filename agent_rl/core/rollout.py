@@ -50,17 +50,16 @@ class RolloutWorker:
         start = time.time()
 
         for _ in range(self.max_steps):
-            policy_out = self.policy.forward(**obs)
-            action = self._sample_action(obs, policy_out)
-            next_obs, reward, done, info = env.step(action)
+            action = self._sample_action(obs)
+            next_obs, reward, done, env_info = env.step(action)
             steps.append(
                 Step(
                     obs=obs,
                     action=action,
-                    logprob=policy_out.logprobs,
+                    logprob=action.get("metadata", {}).get("response_logprobs"),
                     reward=reward,
                     done=done,
-                    info=info,
+                    info={"env": env_info, "policy": action.get("metadata", {})},
                 )
             )
             obs = next_obs
@@ -84,9 +83,9 @@ class RolloutWorker:
         )
         return episode, stats
 
-    def _sample_action(self, obs: Dict[str, Any], policy_out: Any) -> Dict[str, Any]:
+    def _sample_action(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Default action sampler that delegates to policy.generate_action.
+        Default action sampler that delegates to ``policy.generate_action``.
         """
 
         messages = obs.get("messages")

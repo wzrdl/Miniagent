@@ -27,6 +27,9 @@ class CodeExecEnv(AgentEnv):
         self.messages: List[Message] = []
         self.tool_parser = ToolParser()
         self.max_turns = self.config.get("max_turns", 6)
+        self.tests: List[Dict[str, Any]] = []
+        self._tests_passed = False
+        self._latest_test_info: Dict[str, Any] | None = None
 
     def reset(self) -> Dict[str, Any]:
         system_prompt = self.config.get(
@@ -38,6 +41,9 @@ class CodeExecEnv(AgentEnv):
             Message(role="system", content=system_prompt),
             Message(role="user", content=user_prompt),
         ]
+        self.tests = self.task_sample.get("tests", []) or []
+        self._tests_passed = False
+        self._latest_test_info = None
         return {"messages": self.messages}
 
     def step(
@@ -51,6 +57,8 @@ class CodeExecEnv(AgentEnv):
         info: Dict[str, Any] = {}
         reward = 0.0
         done = False
+        # ``test_results`` summarizes automated checks for the latest code run.
+        test_results: Dict[str, Any] | None = None
 
         if tool_call_str:
             if not self.tool_manager:
@@ -62,9 +70,19 @@ class CodeExecEnv(AgentEnv):
                 Message(role="tool", content=tool_result, tool_name=tool_call.name)
             )
             info["tool_result"] = tool_result
+            if self.tests and tool_call.name == "exec_code" and "code" in tool_call.arguments:
+                code_str = str(tool_call.arguments["code"])
+                test_results = self._run_dataset_tests(code_str, tool)
+                info["test_results"] = test_results
+                self._latest_test_info = test_results
+                if test_results["all_passed"]:
+                    reward = self._success_reward()
+                    done = True
+                    self._tests_passed = True
 
-        if self._task_solved():
-            reward = 1.0
+        if not self.tests and self._task_solved():
+            # Classic fallback where the agent prints a sentinel phrase.
+            reward = self._success_reward()
             done = True
         elif len(self.messages) // 2 >= self.max_turns:
             done = True
@@ -73,11 +91,15 @@ class CodeExecEnv(AgentEnv):
         return {"messages": self.messages}, reward, done, info
 
     def compute_final_reward(self) -> float | None:
+        if self.tests and self._tests_passed:
+            return self._success_reward()
         if self._task_solved():
-            return 1.0
+            return self._success_reward()
         return 0.0
 
     def _task_solved(self) -> bool:
+        if self.tests:
+            return self._tests_passed
         reference = self.task_sample.get("reference_solution")
         if not reference:
             return False
@@ -88,6 +110,43 @@ class CodeExecEnv(AgentEnv):
             if message.role == "tool":
                 return message.content
         return ""
+
+    def _run_dataset_tests(self, code: str, tool: Any) -> Dict[str, Any]:
+        """
+        Execute all available tests using the provided code snippet.
+        """
+
+        cases: List[Dict[str, Any]] = []
+        passed_count = 0
+        for idx, test_case in enumerate(self.tests):
+            stdin_payload = test_case.get("input", "")
+            expected = str(test_case.get("output", "")).strip()
+            timeout = float(test_case.get("timeout", self.config.get("test_timeout", 5.0)))
+            actual = str(tool(code=code, stdin=stdin_payload, timeout=timeout)).strip()
+            passed = actual == expected
+            passed_count += int(passed)
+            cases.append(
+                {
+                    "index": idx,
+                    "description": test_case.get("description"),
+                    "expected": expected,
+                    "actual": actual,
+                    "passed": passed,
+                }
+            )
+        return {
+            "cases": cases,
+            "passed_count": passed_count,
+            "total": len(self.tests),
+            "all_passed": passed_count == len(self.tests),
+        }
+
+    def _success_reward(self) -> float:
+        """
+        Read reward from config (default to 1.0) for successful completion.
+        """
+
+        return self.config.get("success_reward", 1.0)
 
 
 __all__ = ["CodeExecEnv"]
