@@ -1,0 +1,2 @@
+{"task_id": "qa_space_telescope", "question": "Which space telescope launched in 2021 is designed for infrared astronomy?", "answer": "James Webb", "documents": ["The James Webb Space Telescope launched in December 2021.", "It observes primarily in the infrared spectrum."], "metadata": {"topic": "astronomy"}}
+

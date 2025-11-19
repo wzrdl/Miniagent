@@ -6,7 +6,28 @@ policy:
 
 env:
   type: search
-  max_turns: 4
+  max_turns: 6
+  success_reward: 1.0
+  timeout_penalty: -0.1
+  system_prompt: >
+    You are a research assistant with access to a live web search tool.
+    Always verify facts via the search tool before finalizing an answer.
+
+tools:
+  search:
+    mode: web
+    provider: tavily
+    api_key_env: TAVILY_API_KEY
+    endpoint: https://api.tavily.com/search
+    default_params:
+      search_depth: basic
+      include_answer: true
+      max_results: 5
+    timeout: 20
+    max_retries: 2
+    backoff_factor: 0.8
+    rate_limit_per_min: 8
+    max_snippet_chars: 520
 
 rollout:
   num_episodes_per_iter: 16

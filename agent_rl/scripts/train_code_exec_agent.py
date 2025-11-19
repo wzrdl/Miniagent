@@ -25,7 +25,10 @@ from typing import Any, Dict, Tuple, List
 import torch
 import yaml
 
+from agent_rl.core.policy_base import BasePolicy
 from agent_rl.core.minimind_policy import MiniMindPolicy, MiniMindPolicyConfig
+from agent_rl.core.hf_policy import HuggingFaceCausalPolicy, HFCausalPolicyConfig
+from agent_rl.core.async_rollout import AsyncRolloutExecutor
 from agent_rl.data import CodeTaskSampler, load_code_task_dataset
 from agent_rl.core.rollout import RolloutWorker
 from agent_rl.core.trajectory import Episode
@@ -162,54 +165,39 @@ def log_preview_tasks(sampler: CodeTaskSampler, num_tasks: int) -> None:
         print(f"[dataset] task_id={task_id} prompt='{first_line[:80]}...'")
 
 
-def build_policy(cfg: Dict[str, Any], args: argparse.Namespace) -> MiniMindPolicy:
+def build_policy(cfg: Dict[str, Any], args: argparse.Namespace) -> BasePolicy:
     """
-    实例化 MiniMind 策略网络及其分词器和生成参数。
-    
-    该函数根据配置文件和命令行参数构建策略网络，包括：
-    - 模型路径和设备配置
-    - 数据类型（float32/bfloat16/float16）
-    - 文本生成参数（最大token数、温度、top_p等）
-    
-    Args:
-        cfg: 配置字典，应包含 "model" 和 "policy" 配置项
-            - model.dtype: 模型数据类型（默认: "float32"）
-            - policy.max_new_tokens: 生成的最大新token数（默认: 128）
-            - policy.temperature: 采样温度，控制随机性（默认: 0.7）
-            - policy.top_p: 核采样参数，控制多样性（默认: 0.95）
-            - policy.do_sample: 是否使用采样（默认: True）
-        args: 命令行参数命名空间
-            - model_path: 模型权重和分词器的目录路径
-            - device: 计算设备（"cpu" 或 "cuda:0" 等）
-    
-    Returns:
-        配置好的 MiniMindPolicy 实例，可用于生成动作和计算策略梯度
-    
-    Note:
-        - temperature 越高，生成越随机；temperature=0 时使用贪婪解码
-        - top_p 控制从累积概率 top_p 的token中采样
-        - do_sample=False 时使用贪婪解码，忽略 temperature 和 top_p
+    根据配置和命令行参数构建策略网络（MiniMind 或 HuggingFace）。
     """
-    # 从配置中提取模型和策略相关配置
+
     model_cfg = cfg.get("model", {})
     policy_cfg = cfg.get("policy", {})
-    # 解析数据类型字符串为 torch.dtype 对象
     dtype = _parse_dtype(model_cfg.get("dtype", "float32"))
-    # 构建策略配置对象、
 
+    if args.policy_type == "huggingface":
+        model_name = args.hf_model_name or model_cfg.get("name")
+        if not model_name:
+            raise ValueError("使用 HuggingFace 策略时需要指定 --hf-model-name 或在配置中设置 model.name。")
+        hf_config = HFCausalPolicyConfig(
+            model_name_or_path=model_name,
+            device=args.device,
+            dtype=dtype,
+            max_new_tokens=policy_cfg.get("max_new_tokens", 128),
+            temperature=policy_cfg.get("temperature", 0.7),
+            top_p=policy_cfg.get("top_p", 0.95),
+            do_sample=policy_cfg.get("do_sample", True),
+        )
+        return HuggingFaceCausalPolicy(hf_config)
 
-    # TODO: 使用minimind模型构建策略配置对象
-    
     policy_config = MiniMindPolicyConfig(
-        model_path=args.model_path,  # 模型权重和分词器路径
-        device=args.device,  # 计算设备
-        dtype=dtype,  # 模型数据类型
-        max_new_tokens=policy_cfg.get("max_new_tokens", 128),  # 生成的最大token数
-        temperature=policy_cfg.get("temperature", 0.7),  # 采样温度
-        top_p=policy_cfg.get("top_p", 0.95),  # 核采样参数
-        do_sample=policy_cfg.get("do_sample", True),  # 是否使用采样
+        model_path=args.model_path,
+        device=args.device,
+        dtype=dtype,
+        max_new_tokens=policy_cfg.get("max_new_tokens", 128),
+        temperature=policy_cfg.get("temperature", 0.7),
+        top_p=policy_cfg.get("top_p", 0.95),
+        do_sample=policy_cfg.get("do_sample", True),
     )
-    # 创建并返回策略实例
     return MiniMindPolicy(policy_config)
 
 
@@ -306,23 +294,31 @@ def main(args: argparse.Namespace) -> None:
         # 快速检查数据集连接是否正确，帮助调试
         log_preview_tasks(train_sampler, args.preview_tasks)
     
-    # 步骤7: 创建轨迹收集工作器，用于在环境中运行策略并收集经验
-    worker = RolloutWorker(
-        policy=policy,  # 策略网络，用于生成动作
-        env_cls=CodeExecEnv,  # 环境类，用于模拟代码执行任务
-        env_config=cfg.get("env"),  # 环境配置参数
-        tool_manager=tools,  # 工具管理器，提供代码执行等工具
-        max_steps=cfg.get("env", {}).get("max_turns", 6),  # 每个episode的最大步数
-    )
+    worker_kwargs = {
+        "policy": policy,
+        "env_cls": CodeExecEnv,
+        "env_config": cfg.get("env"),
+        "tool_manager": tools,
+        "max_steps": cfg.get("env", {}).get("max_turns", 6),
+    }
+    worker = RolloutWorker(**worker_kwargs)
+    async_executor = None
+    if args.async_rollout_workers > 1:
+        worker_factory = lambda: RolloutWorker(**worker_kwargs)
+        async_executor = AsyncRolloutExecutor(worker_factory=worker_factory, max_workers=args.async_rollout_workers)
     
-    # 步骤8: 运行训练循环（采样任务 → 收集轨迹 → 更新策略）
-    run_training_loop(
-        trainer=trainer,  # GRPO 训练器
-        worker=worker,  # 轨迹收集工作器
-        task_sampler=train_sampler,  # 训练任务采样器
-        rollout_cfg=cfg.get("rollout", {}),  # 轨迹收集配置
-        train_cfg=cfg.get("train", {}),  # 训练配置
-    )
+    try:
+        run_training_loop(
+            trainer=trainer,
+            worker=worker,
+            task_sampler=train_sampler,
+            rollout_cfg=cfg.get("rollout", {}),
+            train_cfg=cfg.get("train", {}),
+            async_executor=async_executor,
+        )
+    finally:
+        if async_executor:
+            async_executor.shutdown()
 def collect_episodes(worker: RolloutWorker, task_batch: List[Dict[str, Any]]) -> List[Episode]:
     """
     为提供的任务批次运行轨迹收集，返回完成的 episode 列表。
@@ -362,6 +358,7 @@ def run_training_loop(
     task_sampler: CodeTaskSampler,
     rollout_cfg: Dict[str, Any],
     train_cfg: Dict[str, Any],
+    async_executor: AsyncRolloutExecutor | None = None,
 ) -> None:
     """
     运行最小化的同步训练循环：采样任务 → 收集轨迹 → 更新策略。
@@ -397,8 +394,11 @@ def run_training_loop(
         # 步骤1: 从任务采样器中采样一批任务
         task_batch = task_sampler.next(batch_size=episodes_per_iter)
         
-        # 步骤2: 使用工作器在环境中运行策略，为每个任务收集一个 episode
-        episodes = collect_episodes(worker, task_batch)
+        # 步骤2: 使用同步或异步方式收集轨迹
+        if async_executor:
+            episodes, _ = async_executor.run_batch(task_batch)
+        else:
+            episodes = collect_episodes(worker, task_batch)
         
         # 步骤3: 使用训练器根据收集的轨迹更新策略参数
         # update 方法会计算优势、损失，并执行反向传播和参数更新
@@ -476,6 +476,17 @@ if __name__ == "__main__":
         default="cpu",
         help="Torch device for policy execution, e.g., 'cpu' or 'cuda:0' for GPU."
     )
+    parser.add_argument(
+        "--policy-type",
+        choices=["minimind", "huggingface"],
+        default="minimind",
+        help="Choose which policy backend to instantiate.",
+    )
+    parser.add_argument(
+        "--hf-model-name",
+        default=None,
+        help="HuggingFace model identifier when --policy-type=huggingface.",
+    )
     
     # 预览任务数量：在训练开始前打印样本任务，用于验证数据集连接
     parser.add_argument(
@@ -483,6 +494,12 @@ if __name__ == "__main__":
         type=int,
         default=3,
         help="Number of sample tasks to print at startup for dataset verification (0 to disable)."
+    )
+    parser.add_argument(
+        "--async-rollout-workers",
+        type=int,
+        default=1,
+        help="Number of parallel rollout workers for asynchronous data collection.",
     )
     
     # 解析命令行参数
