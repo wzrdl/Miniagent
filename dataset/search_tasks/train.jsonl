@@ -1,0 +1,3 @@
+{"task_id": "qa_python_history", "question": "Who created the Python programming language?", "answer": "Guido van Rossum", "documents": ["Python was created by Guido van Rossum and first released in 1991.", "The language emphasizes code readability and has a dynamic type system."], "metadata": {"topic": "programming"}}
+{"task_id": "qa_kilimanjaro_height", "question": "How tall is Mount Kilimanjaro?", "answer": "5895", "documents": ["Mount Kilimanjaro is a dormant volcano in Tanzania.", "Its Uhuru Peak rises approximately 5,895 meters above sea level."], "metadata": {"topic": "geography"}}
+

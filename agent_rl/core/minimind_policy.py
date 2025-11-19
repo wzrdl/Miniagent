@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence
 
 import json
+import threading
 
 import torch
 from transformers import AutoTokenizer
@@ -177,6 +178,8 @@ class MiniMindPolicy(BasePolicy):
         
         # 初始化工具解析器，用于解析工具调用
         self.tool_parser = ToolParser()
+        # 生成锁：当在多线程环境中调用 generate_action 时，确保模型推理串行化。
+        self._gen_lock = threading.Lock()
 
     def forward(self, messages: Sequence[Message], **_) -> PolicyOutput:
         """
@@ -310,17 +313,18 @@ class MiniMindPolicy(BasePolicy):
         
         # 步骤4: 使用模型进行自回归生成
         # output_scores=True 和 return_dict_in_generate=True 用于获取生成分数
-        generation = self.model.generate(
-            **tokenized,  # 传入 input_ids 和 attention_mask
-            max_new_tokens=max_new_tokens or self.config.max_new_tokens,  # 最大生成长度
-            temperature=gen_kwargs.get("temperature", self.config.temperature),  # 采样温度
-            top_p=gen_kwargs.get("top_p", self.config.top_p),  # 核采样参数
-            do_sample=gen_kwargs.get("do_sample", self.config.do_sample),  # 是否采样
-            pad_token_id=self.tokenizer.pad_token_id,  # 填充 token ID
-            eos_token_id=self.tokenizer.eos_token_id,  # 结束 token ID
-            output_scores=True,  # 输出每个步骤的分数（用于计算 logprobs）
-            return_dict_in_generate=True,  # 返回字典格式（包含 scores）
-        )
+        with self._gen_lock:
+            generation = self.model.generate(
+                **tokenized,  # 传入 input_ids 和 attention_mask
+                max_new_tokens=max_new_tokens or self.config.max_new_tokens,  # 最大生成长度
+                temperature=gen_kwargs.get("temperature", self.config.temperature),  # 采样温度
+                top_p=gen_kwargs.get("top_p", self.config.top_p),  # 核采样参数
+                do_sample=gen_kwargs.get("do_sample", self.config.do_sample),  # 是否采样
+                pad_token_id=self.tokenizer.pad_token_id,  # 填充 token ID
+                eos_token_id=self.tokenizer.eos_token_id,  # 结束 token ID
+                output_scores=True,  # 输出每个步骤的分数（用于计算 logprobs）
+                return_dict_in_generate=True,  # 返回字典格式（包含 scores）
+            )
         
         # 步骤5: 提取生成的 token IDs（排除提示部分）
         prompt_length = tokenized["input_ids"].shape[-1]  # 提示的长度
